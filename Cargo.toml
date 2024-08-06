@@ -1,0 +1,21 @@
+[package]
+name = "resolve-aws-secrets"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.28", features = ["rt-multi-thread", "macros"] }
+aws-config = "0.55"
+aws-sdk-secretsmanager = "0.28"
+
+[dev-dependencies]
+aws-sdk-secretsmanager = { version = "0.28", features = ["test-util"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
+
+
+

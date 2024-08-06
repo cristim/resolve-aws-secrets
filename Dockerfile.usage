@@ -1,0 +1,4 @@
+FROM alpine
+
+COPY --from=cristim/resolve-aws-secrets:latest /resolve-aws-secrets /resolve-aws-secrets
+
