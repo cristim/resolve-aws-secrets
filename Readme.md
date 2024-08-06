@@ -4,34 +4,11 @@ This tool retrieves secrets from AWS Secrets Manager resources given as environm
 
 The secrets are expected to be prefixed with `SECRET_` and to contain a valid ARN of a secretmanager resource, such as `SECRET_FOO="arn:aws:secretsmanager:us-west-2:123456789012:secret:myapikey`.
 
-The tool then creates environment variables `FOO=secret_value`, where `secret_value`is the value stored in the secretmanager secret.
+The tool then creates environment variables `FOO=secret_value`, where `secret_value`is the value stored in the `SECRET_FOO` secretmanager secret.
 
-The tool then runs a program given as command line argument with the resolved secrets defined as environment variables.
+The tool then runs the program given as command line argument with the resolved secrets defined as such environment variables.
 
-It is meant to be used from Lambda functions that use Docker images, which lack the ability to resolve secrets.
-
-## Prerequisites
-
-- Docker
-- make
-- Rust 1.69 or later (for local development)
-
-## Building the Extension
-
-1. Clone this repository:
-
-   ```shell
-   git clone https://github.com/your-username/resolve-aws-secrets.git
-   cd resolve-aws-secrets
-   ```
-
-2. Build the Docker image:
-
-   ```shell
-   export DOCKER_USERNAME=your-dockerhub-username
-   export DOCKER_PASSWORD=your-dockerhub-password
-   make
-   ```
+It is meant to be used from Lambda functions that use Docker images, which lack the ability to resolve secrets from ARNs.
 
 ## Usage
 
@@ -67,7 +44,30 @@ In case secrets get rotated, one way to refresh the secrets is by crashing the f
 
 Ensure that your Lambda function IAM role has the usual IAM permissions needed to access the secrets in AWS Secrets Manager.
 
-No additional configuration is required. The extension uses the AWS SDK's default credential provider chain.
+No additional configuration is required. The extension uses the AWS SDK's default credential provider chain and connects to the region of each secretmanager ARN.
+
+## Building the code (optional, for local development or running your own fork)
+
+Prerequisites
+
+- Docker
+- make
+- Rust 1.69 or later
+
+1. Clone this repository:
+
+   ```shell
+   git clone https://github.com/your-username/resolve-aws-secrets.git
+   cd resolve-aws-secrets
+   ```
+
+2. Build the Docker image (optional):
+
+   ```shell
+   export DOCKER_USERNAME=your-dockerhub-username
+   export DOCKER_PASSWORD=your-dockerhub-password
+   make
+   ```
 
 ## Contributing
 
@@ -75,4 +75,6 @@ Contributions are welcome, feel free to submit issues or Pull Requests as usual.
 
 ## License
 
-This project is @2024 Cristian Magherusan-Stanciu or [leanercloud.com](https://leanercloud.com), and licensed under the MIT License.
+This project is @2024 Cristian Magherusan-Stanciu of [leanercloud.com](https://leanercloud.com), and licensed under the MIT License.
+
+Check out more of our projects at [github.com/LeanerCloud](https://github.com/LeanerCloud).
