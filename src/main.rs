@@ -1,10 +1,19 @@
 use std::env;
 use std::process::{Command, ExitStatus};
-use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_secretsmanager::{Client, Error};
+use std::collections::HashMap;
+use futures::future::join_all;
 
-async fn setup_aws_client() -> Client {
-    let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
+use aws_config::meta::region::RegionProviderChain;
+
+use aws_sdk_secretsmanager::{Client, config::Region};
+
+
+fn parse_region_from_arn(arn: &str) -> Option<String> {
+    arn.split(':').nth(3).map(String::from)
+}
+
+async fn setup_aws_client(region: &str) -> Client {
+    let region_provider = RegionProviderChain::first_try(Region::new(region.to_string()));
     let config = aws_config::from_env().region(region_provider).load().await;
     Client::new(&config)
 }
@@ -15,16 +24,39 @@ fn collect_secret_arns() -> Vec<(String, String)> {
         .map(|(key, value)| (key[7..].to_string(), value))
         .collect()
 }
+async fn get_secret_value(
+    client: &Client,
+    arn: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let resp = client
+        .get_secret_value()
+        .secret_id(arn)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch secret: {}", e))?;
 
-async fn fetch_secret_values(client: &Client, secrets: Vec<(String, String)>) -> Result<Vec<(String, String)>, Error> {
-    let mut env_vars = Vec::new();
-    for (key, arn) in secrets {
-        let resp = client.get_secret_value().secret_id(arn).send().await?;
-        if let Some(secret_string) = resp.secret_string() {
-            env_vars.push((key, secret_string.to_string()));
-        }
-    }
-    Ok(env_vars)
+    resp.secret_string()
+        .ok_or_else(|| "Secret value is not a string".into())
+        .map(|s| s.to_string())
+}
+
+async fn fetch_secret_values(
+    clients: &HashMap<String, Client>,
+    secrets: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    let futures = secrets.into_iter().map(|(key, arn)| async move {
+        let region = parse_region_from_arn(&arn).ok_or("Invalid ARN")?;
+        let client = clients.get(&region).ok_or("No client for region")?;
+
+        let secret_value = get_secret_value(client, &arn).await?;
+
+        Ok((key, secret_value))
+    });
+
+    let results: Vec<Result<(String, String), Box<dyn std::error::Error>>> =
+        join_all(futures).await;
+
+    results.into_iter().collect()
 }
 
 fn run_program(program: &str, args: &[String], env_vars: Vec<(String, String)>) -> Result<ExitStatus, std::io::Error> {
@@ -46,14 +78,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program = &args[1];
     let program_args = &args[2..];
 
-    // Set up the AWS SDK
-    let client = setup_aws_client().await;
-
     // Collect secrets from environment variables
     let secrets = collect_secret_arns();
 
+    // Extract unique regions from ARNs
+    let unique_regions: Vec<String> = secrets.iter()
+        .filter_map(|(_, arn)| parse_region_from_arn(arn))
+        .collect::<std::collections::HashSet<String>>()
+        .into_iter()
+        .collect();
+
+    // Set up AWS SDK clients for each unique region
+    let mut clients = HashMap::new();
+    for region in unique_regions {
+        clients.insert(region.clone(), setup_aws_client(&region).await);
+    }
+
     // Fetch secret values
-    let env_vars = fetch_secret_values(&client, secrets).await?;
+    let env_vars = fetch_secret_values(&clients, secrets).await?;
 
     // Run the specified program with the new environment
     let status = run_program(program, program_args, env_vars)?;
@@ -65,25 +107,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aws_sdk_secretsmanager::config::{Credentials, Region};
+    use aws_sdk_secretsmanager::config::Credentials;
+
+    #[test]
+    fn test_parse_region_from_arn() {
+        let arn = "arn:aws:secretsmanager:us-west-2:123456789012:secret:mydbpassword";
+        assert_eq!(parse_region_from_arn(arn), Some("us-west-2".to_string()));
+
+        let invalid_arn = "invalid:arn:format";
+        assert_eq!(parse_region_from_arn(invalid_arn), None);
+    }
 
     #[tokio::test]
     async fn test_setup_aws_client() {
-        let client = setup_aws_client().await;
-        assert!(client.conf().region().is_some());
+        let client = setup_aws_client("us-west-2").await;
+        assert_eq!(client.conf().region().unwrap().to_string(), "us-west-2");
     }
 
     #[test]
     fn test_collect_secret_arns() {
         env::set_var("SECRET_DB_PASSWORD", "arn:aws:secretsmanager:us-west-2:123456789012:secret:mydbpassword");
-        env::set_var("SECRET_API_KEY", "arn:aws:secretsmanager:us-west-2:123456789012:secret:myapikey");
+        env::set_var("SECRET_API_KEY", "arn:aws:secretsmanager:us-east-1:123456789012:secret:myapikey");
         env::set_var("NOT_A_SECRET", "this should be ignored");
 
         let secrets = collect_secret_arns();
 
         assert_eq!(secrets.len(), 2);
         assert!(secrets.contains(&("DB_PASSWORD".to_string(), "arn:aws:secretsmanager:us-west-2:123456789012:secret:mydbpassword".to_string())));
-        assert!(secrets.contains(&("API_KEY".to_string(), "arn:aws:secretsmanager:us-west-2:123456789012:secret:myapikey".to_string())));
+        assert!(secrets.contains(&("API_KEY".to_string(), "arn:aws:secretsmanager:us-east-1:123456789012:secret:myapikey".to_string())));
 
         // Clean up environment variables
         env::remove_var("SECRET_DB_PASSWORD");
@@ -93,7 +144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_secret_values() {
-        // Create a mock client
+        // Create mock clients
         let creds = Credentials::new(
             "access_key",
             "secret_key",
@@ -101,21 +152,24 @@ mod tests {
             None,
             "test"
         );
-        let region = Region::new("us-west-2");
-        let conf = aws_sdk_secretsmanager::Config::builder()
-            .credentials_provider(creds)
-            .region(Some(region))
-            .build();
-        let client = Client::from_conf(conf);
+        let mut clients = HashMap::new();
+        for region in &["us-west-2", "us-east-1"] {
+            let conf = aws_sdk_secretsmanager::Config::builder()
+                .credentials_provider(creds.clone())
+                .region(Some(Region::new(region.to_string())))
+                .build();
+            clients.insert(region.to_string(), Client::from_conf(conf));
+        }
 
-        // Mock the get_secret_value method
-        // Note: Actual mocking is not implemented here due to limitations
-        // You might need to use a mocking library or implement a custom mock
+        // Mock secrets
+        let secrets = vec![
+            ("DB_PASSWORD".to_string(), "arn:aws:secretsmanager:us-west-2:123456789012:secret:mydbpassword".to_string()),
+            ("API_KEY".to_string(), "arn:aws:secretsmanager:us-east-1:123456789012:secret:myapikey".to_string()),
+        ];
 
-        let secrets = vec![("TEST_SECRET".to_string(), "test_secret_arn".to_string())];
         // This will fail because we haven't actually mocked the AWS client
         // In a real scenario, you'd use a mocking library to handle this
-        let result = fetch_secret_values(&client, secrets).await;
+        let result = fetch_secret_values(&clients, secrets).await;
 
         // Assert that we get an error because we're not actually connecting to AWS
         assert!(result.is_err());
