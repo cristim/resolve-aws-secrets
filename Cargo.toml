@@ -21,6 +21,10 @@ tracing-subscriber = "0"
 [dev-dependencies]
 aws-sdk-secretsmanager = { version ="1.41.0", features = ["test-util"] }
 aws-sdk-ssm = { version = "1.42.0", features = ["test-util"] }
+aws-smithy-runtime-api ="1.7.2"
+http ="0"
+env_logger="0"
+serial_test="0.10.0"
 
 [profile.release]
 lto = true

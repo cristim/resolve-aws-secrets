@@ -13,8 +13,6 @@ mod ssm_manager;
 pub mod tests;
 
 use crate::environment_processor::process_environment;
-use crate::secret_manager::SecretsManagerClientTrait;
-use crate::ssm_manager::SsmClientTrait;
 
 #[tokio::main]
 #[instrument]
