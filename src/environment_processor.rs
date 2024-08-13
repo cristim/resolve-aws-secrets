@@ -1,18 +1,19 @@
-use aws_sdk_secretsmanager::Client as SecretsManagerClient;
-use aws_sdk_ssm::Client as SsmClient;
+use crate::secret_manager::{get_secret, SecretsManagerClientTrait};
+use crate::ssm_manager::{get_ssm_parameter, SsmClientTrait};
 use serde_json::Value;
 use std::env;
 use std::error::Error;
 use tracing::{info, instrument, warn};
 
-use crate::secret_manager::get_secret;
-use crate::ssm_manager::get_ssm_parameter;
-
 #[instrument(skip(secretsmanager_client, ssm_client))]
-pub async fn process_environment(
-    secretsmanager_client: &SecretsManagerClient,
-    ssm_client: &SsmClient,
-) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+pub async fn process_environment<S, T>(
+    secretsmanager_client: &S,
+    ssm_client: &T,
+) -> Result<Vec<(String, String)>, Box<dyn Error>>
+where
+    S: SecretsManagerClientTrait + ?Sized,
+    T: SsmClientTrait + ?Sized,
+{
     info!("Processing environment variables");
     let mut results = Vec::new();
 
@@ -23,8 +24,8 @@ pub async fn process_environment(
     Ok(results)
 }
 
-async fn process_secret_envs(
-    secretsmanager_client: &SecretsManagerClient,
+async fn process_secret_envs<S: SecretsManagerClientTrait + ?Sized>(
+    secretsmanager_client: &S,
     results: &mut Vec<(String, String)>,
 ) -> Result<(), Box<dyn Error>> {
     for (key, value) in env::vars() {
@@ -37,9 +38,12 @@ async fn process_secret_envs(
     Ok(())
 }
 
-async fn process_ssm_parameter_arn(
-    ssm_client: &SsmClient,
-    secretsmanager_client: &SecretsManagerClient,
+async fn process_ssm_parameter_arn<
+    S: SecretsManagerClientTrait + ?Sized,
+    T: SsmClientTrait + ?Sized,
+>(
+    ssm_client: &T,
+    secretsmanager_client: &S,
     results: &mut Vec<(String, String)>,
 ) -> Result<(), Box<dyn Error>> {
     if let Ok(ssm_arn) = env::var("SECRETS_PARAMETER_ARN") {
@@ -51,9 +55,12 @@ async fn process_ssm_parameter_arn(
     Ok(())
 }
 
-async fn process_ssm_parameter_name(
-    ssm_client: &SsmClient,
-    secretsmanager_client: &SecretsManagerClient,
+async fn process_ssm_parameter_name<
+    S: SecretsManagerClientTrait + ?Sized,
+    T: SsmClientTrait + ?Sized,
+>(
+    ssm_client: &T,
+    secretsmanager_client: &S,
     results: &mut Vec<(String, String)>,
 ) -> Result<(), Box<dyn Error>> {
     if let Ok(ssm_name) = env::var("SECRETS_PARAMETER_NAME") {
@@ -66,9 +73,12 @@ async fn process_ssm_parameter_name(
 }
 
 #[instrument(skip(ssm_client, secretsmanager_client))]
-async fn process_ssm_parameter(
-    ssm_client: &SsmClient,
-    secretsmanager_client: &SecretsManagerClient,
+async fn process_ssm_parameter<
+    S: SecretsManagerClientTrait + ?Sized,
+    T: SsmClientTrait + ?Sized,
+>(
+    ssm_client: &T,
+    secretsmanager_client: &S,
     arn: &str,
 ) -> Result<Vec<(String, String)>, Box<dyn Error>> {
     info!("Processing SSM parameter: {}", arn);
