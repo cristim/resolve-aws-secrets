@@ -46,6 +46,25 @@ Ensure that your Lambda function IAM role has the usual IAM permissions needed t
 
 No additional configuration is required. The extension uses the AWS SDK's default credential provider chain and connects to the region of each secretmanager ARN.
 
+## Known limitations and workarounds
+
+In case you have many variables and secrets you may run into the 4KB limit of Lambda environment variables.
+
+As a workaround for this limitation, you can now also pass the list of secrets in an SSM parameter given through the `SECRETS_PARAMETER_NAME` or `SECRETS_PARAMETER_ARN` environment variables.
+
+The format of the data stored in the SSM parameter is a JSON dictionary as below:
+
+```json
+{
+  "SECRET_FOO": "arn:aws:secretsmanager:eu-central-1:1234567890:secret:secret/name/foo",
+  "SECRET_BAR": "arn:aws:secretsmanager:eu-central-1:1234567890:secret:secret/name/bar"
+}
+```
+
+The tool will fetch that SSM parameter, parse its value and create environment variables for each secret mentioned inside the data, in our case `FOO` and `BAR`.
+
+It's recommended to generate this SSM parameter using your IaC tool of chouce, for example Terraform can do this very nicely.
+
 ## Building the code (optional, for local development or running your own fork)
 
 Prerequisites
